@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>ReadEase</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <main id="app">
+    <header>
+      <h1>ReadEase</h1>
+    </header>
+
+    <section class="card" aria-labelledby="size-title">
+      <div class="card-head">
+        <h2 id="size-title">Text size</h2>
+        <span id="scale-value" class="value">100%</span>
+      </div>
+      <div class="size-controls">
+        <button id="size-down" class="size-btn" title="Smaller (Alt+Shift+Down)" aria-label="Decrease text size">A<span class="minus">−</span></button>
+        <input id="size-slider" type="range" min="50" max="250" step="10" value="100" aria-label="Text size percentage">
+        <button id="size-up" class="size-btn big" title="Larger (Alt+Shift+Up)" aria-label="Increase text size">A<span class="plus">+</span></button>
+      </div>
+      <button id="size-reset" class="link-btn">Reset to 100%</button>
+      <p class="hint">Saved for this site.</p>
+    </section>
+
+    <section class="card" aria-labelledby="hl-title">
+      <div class="card-head">
+        <h2 id="hl-title">Reading highlighter</h2>
+        <label class="switch" title="Toggle highlighter (Alt+Shift+H)">
+          <input id="hl-toggle" type="checkbox" aria-label="Toggle highlighter">
+          <span class="track"></span>
+        </label>
+      </div>
+      <p class="hint">When on, select text on the page to highlight it. Click a highlight to remove it.</p>
+      <div class="swatches" role="radiogroup" aria-label="Highlight color">
+        <button class="swatch" data-color="#ffe066" style="--c:#ffe066" aria-label="Yellow"></button>
+        <button class="swatch" data-color="#a5f3a1" style="--c:#a5f3a1" aria-label="Green"></button>
+        <button class="swatch" data-color="#ffc2dd" style="--c:#ffc2dd" aria-label="Pink"></button>
+        <button class="swatch" data-color="#a8d8ff" style="--c:#a8d8ff" aria-label="Blue"></button>
+      </div>
+      <button id="hl-clear" class="link-btn">Clear all highlights</button>
+    </section>
+  </main>
+
+  <div id="unavailable" hidden>
+    <p>ReadEase can't run on this page.</p>
+    <p class="hint">Chrome system pages and the Web Store are off-limits to extensions. Try a regular website.</p>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

@@ -1,0 +1,45 @@
+{
+  "manifest_version": 3,
+  "name": "ReadEase - Text Size & Reading Highlighter",
+  "version": "0.1.0",
+  "description": "Adjust text size on any page (saved per site) and highlight text while reading.",
+  "permissions": ["storage"],
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "ReadEase"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "css": ["content.css"],
+      "run_at": "document_idle",
+      "all_frames": true
+    }
+  ],
+  "commands": {
+    "increase-text": {
+      "suggested_key": { "default": "Alt+Shift+Up" },
+      "description": "Increase text size"
+    },
+    "decrease-text": {
+      "suggested_key": { "default": "Alt+Shift+Down" },
+      "description": "Decrease text size"
+    },
+    "toggle-highlighter": {
+      "suggested_key": { "default": "Alt+Shift+H" },
+      "description": "Toggle the reading highlighter"
+    },
+    "reset-text": {
+      "description": "Reset text size to 100%"
+    }
+  }
+}
