@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "ReadEase - Text Size & Reading Highlighter",
-  "version": "0.2.0",
-  "description": "Adjust text size on any page (saved per site) and highlight text while reading.",
+  "version": "0.3.0",
+  "description": "Adjust the reading text size on any page (saved per site) and highlight text while reading.",
   "permissions": ["storage"],
   "icons": {
     "16": "icons/icon16.png",

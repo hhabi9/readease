@@ -19,6 +19,11 @@ function showScale(scale) {
   $("size-slider").value = scale;
 }
 
+function showMode(mode) {
+  $("mode-main").classList.toggle("selected", mode !== "page");
+  $("mode-page").classList.toggle("selected", mode === "page");
+}
+
 function selectSwatch(color) {
   for (const btn of document.querySelectorAll(".swatch")) {
     btn.classList.toggle("selected", btn.dataset.color === color);
@@ -42,8 +47,16 @@ async function init() {
   }
 
   showScale(state.scale);
+  showMode(state.mode);
   $("hl-toggle").checked = state.highlighterOn;
   selectSwatch(state.color);
+
+  for (const mode of ["main", "page"]) {
+    $("mode-" + mode).addEventListener("click", () => {
+      showMode(mode);
+      send({ type: "set-mode", mode });
+    });
+  }
 
   // Absolute values only: broadcasting a relative "adjust" would move each
   // frame off its own scale, and any frame's response could drive the UI.

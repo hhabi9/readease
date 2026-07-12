@@ -2,8 +2,11 @@
 
 Chrome extension (Manifest V3) that makes reading easier:
 
-- **Text size** — scale the text on any page from 50% to 250%. The setting is
-  saved per site and re-applied automatically on your next visit.
+- **Text size** — scale the reading text on any page from 50% to 250%. By
+  default only the main text grows (paragraphs, lists, headings — not menus,
+  buttons, or other UI); a **Whole page** toggle in the popup scales
+  everything instead. Scale and mode are saved per site and re-applied
+  automatically on your next visit.
 - **Reading highlighter** — toggle it on, then select text on the page to
   highlight it. Four colors, click a highlight to remove it, or clear them all
   from the popup.
@@ -21,6 +24,10 @@ Chrome extension (Manifest V3) that makes reading easier:
 Click the ReadEase toolbar icon to open the popup:
 
 - Use **A− / slider / A+** to change text size, **Reset to 100%** to undo.
+- **Main text / Whole page** picks what gets resized. Main text targets
+  prose-like blocks (paragraphs, list items, headings, quotes, table cells
+  with real sentences); short labels and controls are treated as UI and left
+  alone. If a site's layout confuses the heuristic, switch to Whole page.
 - Flip the **Reading highlighter** switch, pick a color, then select text on
   the page. Click any highlight to remove it, or use **Clear all highlights**.
 
