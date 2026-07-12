@@ -98,25 +98,46 @@
     if (SKIP_TAGS.has(el.tagName)) return false;
     if (el instanceof SVGElement) return false;
     if (el.id === "readease-toast") return false;
+    if (el.classList.contains("readease-highlight")) return false; // inherits its size
     return FORM_TAGS.has(el.tagName) || hasDirectText(el);
   }
 
-  function scaleElement(el, factor) {
-    let orig = el[ORIG];
-    if (!orig) {
-      const cs = getComputedStyle(el);
-      const fontSize = parseFloat(cs.fontSize);
-      if (!fontSize) return;
-      orig = {
-        fontSize,
-        lineHeight: cs.lineHeight.endsWith("px") ? parseFloat(cs.lineHeight) : null,
-        inlineFs: el.style.getPropertyValue("font-size"),
-        inlineFsPrio: el.style.getPropertyPriority("font-size"),
-        inlineLh: el.style.getPropertyValue("line-height"),
-        inlineLhPrio: el.style.getPropertyPriority("line-height"),
-      };
-      el[ORIG] = orig;
+  function nearestScaledAncestor(el) {
+    for (let p = composedParent(el); p; p = composedParent(p)) {
+      if (p[ORIG]) return p;
     }
+    return null;
+  }
+
+  // Records the element's true pre-scale metrics. Returns false when the
+  // element shouldn't get its own font-size: an element discovered after its
+  // ancestor was scaled reports an inflated computed size, and if that size
+  // just inherits from the scaled ancestor, writing it back would compound
+  // the scaling on every later adjustment - inheritance already keeps it
+  // right at any factor.
+  function captureOrig(el) {
+    if (el[ORIG]) return true;
+    const cs = getComputedStyle(el);
+    const fontSize = parseFloat(cs.fontSize);
+    if (!fontSize) return false;
+    const anc = nearestScaledAncestor(el);
+    if (anc && Math.abs(fontSize - parseFloat(getComputedStyle(anc).fontSize)) < 0.1) {
+      return false;
+    }
+    el[ORIG] = {
+      fontSize,
+      lineHeight: cs.lineHeight.endsWith("px") ? parseFloat(cs.lineHeight) : null,
+      inlineFs: el.style.getPropertyValue("font-size"),
+      inlineFsPrio: el.style.getPropertyPriority("font-size"),
+      inlineLh: el.style.getPropertyValue("line-height"),
+      inlineLhPrio: el.style.getPropertyPriority("line-height"),
+    };
+    return true;
+  }
+
+  function scaleElement(el, factor) {
+    const orig = el[ORIG];
+    if (!orig) return;
     if (factor === 1) {
       // Put back whatever inline style the page originally had.
       if (orig.inlineFs) el.style.setProperty("font-size", orig.inlineFs, orig.inlineFsPrio);
@@ -132,20 +153,20 @@
     }
   }
 
-  // Scales the subtree; inText is true once we're inside a qualifying
-  // reading-text block, at which point everything below it scales.
-  function scaleTree(node, factor, inText) {
+  // Collects the elements to scale; inText is true once we're inside a
+  // qualifying reading-text block, at which point everything below it counts.
+  function collectScalable(node, inText, out) {
     if (node.nodeType !== Node.ELEMENT_NODE) return;
     if (SKIP_TAGS.has(node.tagName) || node instanceof SVGElement) return;
     const qualifies = inText || (TEXTY.has(node.tagName) && qualifiesBlock(node));
     if (isScalable(node) && (state.mode === "page" || qualifies)) {
-      scaleElement(node, factor);
+      out.push(node);
     }
     if (node.shadowRoot) {
       registerShadowRoot(node.shadowRoot);
-      for (const child of node.shadowRoot.children) scaleTree(child, factor, qualifies);
+      for (const child of node.shadowRoot.children) collectScalable(child, qualifies, out);
     }
-    for (const child of node.children) scaleTree(child, factor, qualifies);
+    for (const child of node.children) collectScalable(child, qualifies, out);
   }
 
   function restoreAll() {
@@ -165,7 +186,12 @@
     }
     const scope = root && root.nodeType === Node.ELEMENT_NODE ? root : document.body;
     if (scope !== document.body && !scope.isConnected) return;
-    scaleTree(scope, factor, scope === document.body ? false : inTextContext(scope));
+    const targets = [];
+    collectScalable(scope, scope === document.body ? false : inTextContext(scope), targets);
+    // Capture every original size before writing any: scaling a parent first
+    // would inflate the computed size its descendants report.
+    const ready = targets.filter(captureOrig);
+    for (const el of ready) scaleElement(el, factor);
   }
 
   function setScale(value, { persist = true, announce = false } = {}) {
