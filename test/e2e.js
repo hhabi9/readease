@@ -33,6 +33,16 @@ const PAGE = `<!doctype html><html><head><title>ReadEase test</title></head><bod
 <p id="p1" style="font-size:16px">Hello world this is a test paragraph for ReadEase.</p>
 <p id="p2">Second paragraph with default sizing for highlight tests.</p>
 <div id="dyn"></div>
+<p id="p4">Site handler stops propagation of mouseup on this paragraph.</p>
+<div id="shadow-host"></div>
+<iframe id="fr" srcdoc="&lt;p id='ip' style='font-size:16px'&gt;Srcdoc iframe paragraph.&lt;/p&gt;"></iframe>
+<script>
+  // Simulate a site (like AMBOSS) that swallows mouseup before it bubbles.
+  document.getElementById("p4").addEventListener("mouseup", (e) => e.stopPropagation());
+  // Simulate content rendered inside an open shadow root.
+  const root = document.getElementById("shadow-host").attachShadow({ mode: "open" });
+  root.innerHTML = '<p id="sp" style="font-size:16px">Shadow paragraph for scale and highlight.</p>';
+</script>
 </body></html>`;
 
 let failures = 0;
@@ -74,16 +84,22 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
     // Extension has no "tabs" permission, so we can't query by URL here;
     // send to whichever tab has the content script (only the test page does).
-    const sendToTab = (msg) =>
-      sw.evaluate(async (m) => {
-        const tabs = await chrome.tabs.query({});
-        for (const t of tabs) {
-          try {
-            return await chrome.tabs.sendMessage(t.id, m);
-          } catch {}
-        }
-        return null;
-      }, msg);
+    // A broadcast reaches every frame but returns whichever frame's response
+    // lands first; pass { frameId: 0 } when asserting on the response value.
+    const sendToTab = (msg, opts) =>
+      sw.evaluate(
+        async (m, o) => {
+          const tabs = await chrome.tabs.query({});
+          for (const t of tabs) {
+            try {
+              return o ? await chrome.tabs.sendMessage(t.id, m, o) : await chrome.tabs.sendMessage(t.id, m);
+            } catch {}
+          }
+          return null;
+        },
+        msg,
+        opts ?? null
+      );
 
     // --- initial state ---
     const state = await sendToTab({ type: "get-state" });
@@ -181,7 +197,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     check("new color applied", marks.every((m) => m.bg === "rgb(168, 216, 255)"));
 
     // clear-highlights removes everything, text unharmed
-    resp = await sendToTab({ type: "clear-highlights" });
+    resp = await sendToTab({ type: "clear-highlights" }, { frameId: 0 });
     count = await page.evaluate(() => document.querySelectorAll("mark.readease-highlight").length);
     const text = await page.evaluate(() => document.getElementById("p2").textContent);
     check("clear-highlights removes all", resp.cleared === 2 && count === 0, JSON.stringify(resp));
@@ -202,6 +218,93 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     await sleep(150);
     count = await page.evaluate(() => document.querySelectorAll("mark.readease-highlight").length);
     check("no highlight when mode off", count === 0, String(count));
+
+    // --- AMBOSS-style regressions: shadow DOM, srcdoc iframes, stopPropagation ---
+
+    await sendToTab({ type: "set-scale", value: 150 });
+    await sleep(300);
+    fs = await page.evaluate(
+      () => getComputedStyle(document.getElementById("shadow-host").shadowRoot.getElementById("sp")).fontSize
+    );
+    check("shadow DOM content scaled", fs === "24px", fs);
+
+    await page.evaluate(() => {
+      const root = document.getElementById("shadow-host").shadowRoot;
+      const p = document.createElement("p");
+      p.id = "sp2";
+      p.style.fontSize = "16px";
+      p.textContent = "Dynamically added shadow paragraph.";
+      root.appendChild(p);
+    });
+    await sleep(400);
+    fs = await page.evaluate(
+      () => getComputedStyle(document.getElementById("shadow-host").shadowRoot.getElementById("sp2")).fontSize
+    );
+    check("dynamic shadow DOM content scaled", fs === "24px", fs);
+
+    const srcdocFrame = page.frames().find((f) => f.url().startsWith("about:srcdoc"));
+    check("content script injected into srcdoc iframe", !!srcdocFrame);
+    if (srcdocFrame) {
+      fs = await srcdocFrame.evaluate(() => getComputedStyle(document.getElementById("ip")).fontSize);
+      check("srcdoc iframe content scaled", fs === "24px", fs);
+    }
+
+    await sendToTab({ type: "reset-scale" });
+    await sleep(300);
+    fs = await page.evaluate(
+      () => getComputedStyle(document.getElementById("shadow-host").shadowRoot.getElementById("sp")).fontSize
+    );
+    check("reset restores shadow DOM content", fs === "16px", fs);
+
+    // capture-phase listener survives a site's stopPropagation on mouseup
+    await sendToTab({ type: "set-highlighter", on: true });
+    await page.evaluate(() => {
+      const p = document.getElementById("p4");
+      const range = document.createRange();
+      range.setStart(p.firstChild, 0);
+      range.setEnd(p.firstChild, 12);
+      const sel = getSelection();
+      sel.removeAllRanges();
+      sel.addRange(range);
+      p.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, composed: true }));
+    });
+    await sleep(150);
+    mark = await page.evaluate(() => {
+      const m = document.querySelector("#p4 mark.readease-highlight");
+      return m ? { text: m.textContent } : null;
+    });
+    check("highlight despite site stopPropagation", !!mark && mark.text === "Site handler", JSON.stringify(mark));
+
+    // highlight inside a shadow root
+    await page.evaluate(() => {
+      const root = document.getElementById("shadow-host").shadowRoot;
+      const p = root.getElementById("sp");
+      const range = document.createRange();
+      range.setStart(p.firstChild, 0);
+      range.setEnd(p.firstChild, 6);
+      const sel = getSelection();
+      sel.removeAllRanges();
+      sel.addRange(range);
+      p.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, composed: true }));
+    });
+    await sleep(150);
+    mark = await page.evaluate(() => {
+      const m = document
+        .getElementById("shadow-host")
+        .shadowRoot.querySelector("mark.readease-highlight");
+      return m ? { text: m.textContent } : null;
+    });
+    check("highlight inside shadow root", !!mark && mark.text === "Shadow", JSON.stringify(mark));
+
+    // clear-highlights reaches into shadow roots too
+    resp = await sendToTab({ type: "clear-highlights" }, { frameId: 0 });
+    count = await page.evaluate(
+      () =>
+        document.querySelectorAll("mark.readease-highlight").length +
+        document.getElementById("shadow-host").shadowRoot.querySelectorAll("mark.readease-highlight").length
+    );
+    check("clear-highlights reaches shadow DOM", resp.cleared >= 2 && count === 0, JSON.stringify({ resp, count }));
+    await sendToTab({ type: "set-highlighter", on: false });
 
     // page console errors from our content script?
     const errors = [];

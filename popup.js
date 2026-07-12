@@ -2,8 +2,16 @@ const $ = (id) => document.getElementById(id);
 
 let tabId = null;
 
+// Broadcasts to every frame in the tab (each applies the action); the
+// returned value is the first frame's response.
 function send(message) {
   return chrome.tabs.sendMessage(tabId, message);
+}
+
+// State shown in the popup must come from the top frame specifically -
+// with all_frames content scripts, an ad iframe could answer first.
+function sendTop(message) {
+  return chrome.tabs.sendMessage(tabId, message, { frameId: 0 });
 }
 
 function showScale(scale) {
@@ -23,7 +31,7 @@ async function init() {
 
   let state;
   try {
-    state = await send({ type: "get-state" });
+    state = await sendTop({ type: "get-state" });
   } catch {
     state = null;
   }
@@ -37,18 +45,15 @@ async function init() {
   $("hl-toggle").checked = state.highlighterOn;
   selectSwatch(state.color);
 
-  $("size-slider").addEventListener("input", async (e) => {
-    const { scale } = await send({ type: "set-scale", value: Number(e.target.value) });
+  // Absolute values only: broadcasting a relative "adjust" would move each
+  // frame off its own scale, and any frame's response could drive the UI.
+  const applyScaleValue = async (value) => {
+    const { scale } = await send({ type: "set-scale", value });
     showScale(scale);
-  });
-  $("size-up").addEventListener("click", async () => {
-    const { scale } = await send({ type: "adjust-scale", delta: 10 });
-    showScale(scale);
-  });
-  $("size-down").addEventListener("click", async () => {
-    const { scale } = await send({ type: "adjust-scale", delta: -10 });
-    showScale(scale);
-  });
+  };
+  $("size-slider").addEventListener("input", (e) => applyScaleValue(Number(e.target.value)));
+  $("size-up").addEventListener("click", () => applyScaleValue(Number($("size-slider").value) + 10));
+  $("size-down").addEventListener("click", () => applyScaleValue(Number($("size-slider").value) - 10));
   $("size-reset").addEventListener("click", async () => {
     const { scale } = await send({ type: "reset-scale" });
     showScale(scale);

@@ -27,6 +27,34 @@
   ]);
   const FORM_TAGS = new Set(["INPUT", "TEXTAREA", "SELECT", "BUTTON"]);
 
+  // Open shadow roots we've discovered; each is observed for mutations and
+  // included in every scaling/highlight walk (sites like AMBOSS render
+  // content inside shadow DOM, which querySelectorAll never reaches).
+  const shadowRoots = new Set();
+
+  function* walk(node) {
+    if (node.nodeType === Node.ELEMENT_NODE) {
+      yield node;
+      if (node.shadowRoot && !shadowRoots.has(node.shadowRoot)) {
+        shadowRoots.add(node.shadowRoot);
+        observer.observe(node.shadowRoot, { childList: true, subtree: true });
+      }
+      if (node.shadowRoot) yield* walk(node.shadowRoot);
+    }
+    const children = node.nodeType === Node.ELEMENT_NODE || node.nodeType === Node.DOCUMENT_FRAGMENT_NODE
+      ? node.children
+      : [];
+    for (const child of children) yield* walk(child);
+  }
+
+  function queryAllDeep(selector) {
+    const found = [...document.querySelectorAll(selector)];
+    for (const root of shadowRoots) {
+      if (root.host?.isConnected) found.push(...root.querySelectorAll(selector));
+    }
+    return found;
+  }
+
   function hasDirectText(el) {
     for (const node of el.childNodes) {
       if (node.nodeType === Node.TEXT_NODE && node.data.trim()) return true;
@@ -77,8 +105,7 @@
     if (!document.body) return;
     const scope = root && root.nodeType === Node.ELEMENT_NODE ? root : document.body;
     if (scope !== document.body && !scope.isConnected) return;
-    const elements = [scope, ...scope.querySelectorAll("*")];
-    for (const el of elements) {
+    for (const el of walk(scope)) {
       if (factor === 1) {
         // On reset, restore anything we touched, not just current text holders.
         if (el[ORIG]) scaleElement(el, 1);
@@ -166,11 +193,27 @@
     return wrapped;
   }
 
-  function onMouseUp() {
+  // Selections inside an open shadow root are invisible to
+  // window.getSelection() in Chrome; the shadow root's own (non-standard but
+  // supported) getSelection sees them.
+  function selectionFor(event) {
+    const target = event.composedPath?.()[0];
+    const root = target?.getRootNode?.();
+    if (root instanceof ShadowRoot) {
+      if (!shadowRoots.has(root)) {
+        shadowRoots.add(root);
+        observer.observe(root, { childList: true, subtree: true });
+      }
+      if (typeof root.getSelection === "function") return root.getSelection();
+    }
+    return window.getSelection();
+  }
+
+  function onMouseUp(event) {
     if (!state.highlighterOn) return;
     // Let the browser finalize the selection first.
     setTimeout(() => {
-      const sel = window.getSelection();
+      const sel = selectionFor(event);
       if (!sel || sel.isCollapsed) return;
       let wrapped = 0;
       for (let i = 0; i < sel.rangeCount; i++) {
@@ -189,15 +232,16 @@
 
   function onClick(event) {
     if (!state.highlighterOn) return;
-    const mark = event.target.closest?.("mark.readease-highlight");
+    const target = event.composedPath?.()[0] ?? event.target;
+    const mark = target.closest?.("mark.readease-highlight");
     if (!mark) return;
-    const sel = window.getSelection();
+    const sel = selectionFor(event);
     if (sel && !sel.isCollapsed) return; // this was a drag-select, not a click
     unwrapMark(mark);
   }
 
   function clearHighlights() {
-    const marks = document.querySelectorAll("mark.readease-highlight");
+    const marks = queryAllDeep("mark.readease-highlight");
     for (const mark of marks) unwrapMark(mark);
     return marks.length;
   }
@@ -238,7 +282,7 @@
           scale: state.scale,
           highlighterOn: state.highlighterOn,
           color: state.color,
-          highlightCount: document.querySelectorAll("mark.readease-highlight").length,
+          highlightCount: queryAllDeep("mark.readease-highlight").length,
         });
         break;
       case "set-scale":
@@ -271,8 +315,10 @@
     }
   });
 
-  document.addEventListener("mouseup", onMouseUp);
-  document.addEventListener("click", onClick);
+  // Capture phase: sites with their own selection handlers (AMBOSS et al.)
+  // stopPropagation on mouseup/click, which starves bubble-phase listeners.
+  document.addEventListener("mouseup", onMouseUp, true);
+  document.addEventListener("click", onClick, true);
 
   chrome.storage.sync.get([HOST_KEY, "color"], (res) => {
     if (chrome.runtime.lastError) return;

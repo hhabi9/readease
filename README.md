@@ -53,6 +53,9 @@ elements.
 
 ## Notes & limitations
 
+- Works inside open shadow DOM and same-origin/srcdoc iframes (needed for
+  app-style sites such as AMBOSS). Closed shadow roots and cross-origin
+  isolation the browser enforces are out of reach for any extension.
 - Highlights live in the page only — they are gone after a reload.
 - Text scaling adjusts font sizes (and pixel line-heights) rather than zooming
   the layout, so tightly designed sites may look slightly off at large sizes.
