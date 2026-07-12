@@ -13,6 +13,7 @@
 
   const state = {
     scale: 100,
+    mode: "main", // "main" scales reading text only; "page" scales everything
     highlighterOn: false,
     color: DEFAULT_COLOR,
   };
@@ -27,19 +28,50 @@
   ]);
   const FORM_TAGS = new Set(["INPUT", "TEXTAREA", "SELECT", "BUTTON"]);
 
+  // Reading-text blocks: in "main" mode only these (and their contents) are
+  // scaled, so menus, buttons, and other UI chrome keep their size.
+  const TEXTY = new Set([
+    "P", "LI", "BLOCKQUOTE", "PRE", "DD", "DT", "FIGCAPTION", "TD", "TH",
+    "H1", "H2", "H3", "H4", "H5", "H6",
+  ]);
+
+  // Short texty elements ("Home", "Sign in") are treated as UI, not prose;
+  // headings qualify regardless of length.
+  function qualifiesBlock(el) {
+    return /^H[1-6]$/.test(el.tagName) || el.textContent.trim().length >= 25;
+  }
+
+  function composedParent(node) {
+    if (node.parentElement) return node.parentElement;
+    const root = node.getRootNode();
+    return root instanceof ShadowRoot ? root.host : null;
+  }
+
+  function inTextContext(el) {
+    for (let p = composedParent(el); p; p = composedParent(p)) {
+      if (TEXTY.has(p.tagName) && qualifiesBlock(p)) return true;
+    }
+    return false;
+  }
+
   // Open shadow roots we've discovered; each is observed for mutations and
   // included in every scaling/highlight walk (sites like AMBOSS render
   // content inside shadow DOM, which querySelectorAll never reaches).
   const shadowRoots = new Set();
 
+  function registerShadowRoot(root) {
+    if (shadowRoots.has(root)) return;
+    shadowRoots.add(root);
+    observer.observe(root, { childList: true, subtree: true });
+  }
+
   function* walk(node) {
     if (node.nodeType === Node.ELEMENT_NODE) {
       yield node;
-      if (node.shadowRoot && !shadowRoots.has(node.shadowRoot)) {
-        shadowRoots.add(node.shadowRoot);
-        observer.observe(node.shadowRoot, { childList: true, subtree: true });
+      if (node.shadowRoot) {
+        registerShadowRoot(node.shadowRoot);
+        yield* walk(node.shadowRoot);
       }
-      if (node.shadowRoot) yield* walk(node.shadowRoot);
     }
     const children = node.nodeType === Node.ELEMENT_NODE || node.nodeType === Node.DOCUMENT_FRAGMENT_NODE
       ? node.children
@@ -100,19 +132,40 @@
     }
   }
 
+  // Scales the subtree; inText is true once we're inside a qualifying
+  // reading-text block, at which point everything below it scales.
+  function scaleTree(node, factor, inText) {
+    if (node.nodeType !== Node.ELEMENT_NODE) return;
+    if (SKIP_TAGS.has(node.tagName) || node instanceof SVGElement) return;
+    const qualifies = inText || (TEXTY.has(node.tagName) && qualifiesBlock(node));
+    if (isScalable(node) && (state.mode === "page" || qualifies)) {
+      scaleElement(node, factor);
+    }
+    if (node.shadowRoot) {
+      registerShadowRoot(node.shadowRoot);
+      for (const child of node.shadowRoot.children) scaleTree(child, factor, qualifies);
+    }
+    for (const child of node.children) scaleTree(child, factor, qualifies);
+  }
+
+  function restoreAll() {
+    if (!document.body) return;
+    for (const el of walk(document.body)) {
+      if (el[ORIG]) scaleElement(el, 1);
+    }
+  }
+
   function applyScale(root) {
     const factor = state.scale / 100;
     if (!document.body) return;
+    if (factor === 1) {
+      // On reset, restore anything we touched, not just current text holders.
+      restoreAll();
+      return;
+    }
     const scope = root && root.nodeType === Node.ELEMENT_NODE ? root : document.body;
     if (scope !== document.body && !scope.isConnected) return;
-    for (const el of walk(scope)) {
-      if (factor === 1) {
-        // On reset, restore anything we touched, not just current text holders.
-        if (el[ORIG]) scaleElement(el, 1);
-      } else if (isScalable(el)) {
-        scaleElement(el, factor);
-      }
-    }
+    scaleTree(scope, factor, scope === document.body ? false : inTextContext(scope));
   }
 
   function setScale(value, { persist = true, announce = false } = {}) {
@@ -122,10 +175,22 @@
       if (state.scale === 100) {
         chrome.storage.sync.remove(HOST_KEY);
       } else {
-        chrome.storage.sync.set({ [HOST_KEY]: { scale: state.scale } });
+        chrome.storage.sync.set({ [HOST_KEY]: { scale: state.scale, mode: state.mode } });
       }
     }
     if (announce) toast(`Text size: ${state.scale}%`);
+  }
+
+  function setMode(mode) {
+    if ((mode !== "main" && mode !== "page") || mode === state.mode) return;
+    // Elements scaled under the old mode may not be eligible under the new
+    // one, so restore everything before re-applying.
+    restoreAll();
+    state.mode = mode;
+    if (state.scale !== 100) {
+      applyScale();
+      chrome.storage.sync.set({ [HOST_KEY]: { scale: state.scale, mode: state.mode } });
+    }
   }
 
   // Rescale content that appears after the initial pass (infinite scroll,
@@ -200,10 +265,7 @@
     const target = event.composedPath?.()[0];
     const root = target?.getRootNode?.();
     if (root instanceof ShadowRoot) {
-      if (!shadowRoots.has(root)) {
-        shadowRoots.add(root);
-        observer.observe(root, { childList: true, subtree: true });
-      }
+      registerShadowRoot(root);
       if (typeof root.getSelection === "function") return root.getSelection();
     }
     return window.getSelection();
@@ -280,10 +342,15 @@
       case "get-state":
         sendResponse({
           scale: state.scale,
+          mode: state.mode,
           highlighterOn: state.highlighterOn,
           color: state.color,
           highlightCount: queryAllDeep("mark.readease-highlight").length,
         });
+        break;
+      case "set-mode":
+        setMode(msg.mode);
+        sendResponse({ mode: state.mode });
         break;
       case "set-scale":
         setScale(msg.value);
@@ -323,6 +390,7 @@
   chrome.storage.sync.get([HOST_KEY, "color"], (res) => {
     if (chrome.runtime.lastError) return;
     if (res.color) state.color = res.color;
+    if (res[HOST_KEY]?.mode === "page") state.mode = "page";
     const saved = res[HOST_KEY]?.scale;
     if (saved && saved !== 100) setScale(saved, { persist: false });
   });

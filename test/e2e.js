@@ -35,7 +35,12 @@ const PAGE = `<!doctype html><html><head><title>ReadEase test</title></head><bod
 <div id="dyn"></div>
 <p id="p4">Site handler stops propagation of mouseup on this paragraph.</p>
 <div id="shadow-host"></div>
-<iframe id="fr" srcdoc="&lt;p id='ip' style='font-size:16px'&gt;Srcdoc iframe paragraph.&lt;/p&gt;"></iframe>
+<nav id="menu" style="font-size:16px">
+  <ul><li id="mi">Home</li><li>About</li></ul>
+  <button id="mbtn" style="font-size:16px">Sign in</button>
+  <span id="mlabel">Navigation</span>
+</nav>
+<iframe id="fr" srcdoc="&lt;p id='ip' style='font-size:16px'&gt;Srcdoc iframe paragraph with plenty of readable text.&lt;/p&gt;"></iframe>
 <script>
   // Simulate a site (like AMBOSS) that swallows mouseup before it bubbles.
   document.getElementById("p4").addEventListener("mouseup", (e) => e.stopPropagation());
@@ -113,6 +118,41 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     let fs2 = await page.evaluate(() => getComputedStyle(document.getElementById("p2")).fontSize);
     check("unstyled paragraph also scaled", parseFloat(fs2) === 24, fs2);
 
+    // main-text mode (default): menus, buttons, and short labels keep their size
+    let resp;
+    let menuSizes = await page.evaluate(() => ({
+      item: getComputedStyle(document.getElementById("mi")).fontSize,
+      button: getComputedStyle(document.getElementById("mbtn")).fontSize,
+      label: getComputedStyle(document.getElementById("mlabel")).fontSize,
+    }));
+    check(
+      "menu UI untouched in main-text mode",
+      menuSizes.item === "16px" && menuSizes.button === "16px" && menuSizes.label === "16px",
+      JSON.stringify(menuSizes)
+    );
+
+    // whole-page mode scales UI chrome too; switching back restores it
+    resp = await sendToTab({ type: "set-mode", mode: "page" }, { frameId: 0 });
+    await sleep(200);
+    menuSizes = await page.evaluate(() => ({
+      item: getComputedStyle(document.getElementById("mi")).fontSize,
+      button: getComputedStyle(document.getElementById("mbtn")).fontSize,
+    }));
+    check("whole-page mode scales menu", menuSizes.item === "24px" && menuSizes.button === "24px", JSON.stringify(menuSizes));
+    check("set-mode responds with mode", resp && resp.mode === "page", JSON.stringify(resp));
+
+    await sendToTab({ type: "set-mode", mode: "main" }, { frameId: 0 });
+    await sleep(200);
+    menuSizes = await page.evaluate(() => ({
+      item: getComputedStyle(document.getElementById("mi")).fontSize,
+      p1: getComputedStyle(document.getElementById("p1")).fontSize,
+    }));
+    check(
+      "back to main-text mode restores menu, keeps prose scaled",
+      menuSizes.item === "16px" && menuSizes.p1 === "24px",
+      JSON.stringify(menuSizes)
+    );
+
     // dynamically added content gets scaled by the MutationObserver
     await page.evaluate(() => {
       const p = document.createElement("p");
@@ -132,7 +172,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     check("scale persists after reload", fs === "24px", fs);
 
     // adjust via shortcut-style message
-    let resp = await sendToTab({ type: "adjust-scale", delta: 10 });
+    resp = await sendToTab({ type: "adjust-scale", delta: 10 });
     check("adjust-scale returns 160", resp && resp.scale === 160, JSON.stringify(resp));
 
     // reset restores original inline styles and cleans storage
