@@ -34,6 +34,7 @@ const PAGE = `<!doctype html><html><head><title>ReadEase test</title></head><bod
 <p id="p2">Second paragraph with default sizing for highlight tests.</p>
 <div id="dyn"></div>
 <p id="p4">Site handler stops propagation of mouseup on this paragraph.</p>
+<p id="p5" style="font-size:16px">Inline elements like <strong id="st">bold text</strong> must track their paragraph when scaled.</p>
 <div id="shadow-host"></div>
 <nav id="menu" style="font-size:16px">
   <ul><li id="mi">Home</li><li>About</li></ul>
@@ -118,6 +119,10 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     let fs2 = await page.evaluate(() => getComputedStyle(document.getElementById("p2")).fontSize);
     check("unstyled paragraph also scaled", parseFloat(fs2) === 24, fs2);
 
+    // inline children scale with their block, not on top of it
+    fs = await page.evaluate(() => getComputedStyle(document.getElementById("st")).fontSize);
+    check("inline element matches paragraph at 150%", fs === "24px", fs);
+
     // main-text mode (default): menus, buttons, and short labels keep their size
     let resp;
     let menuSizes = await page.evaluate(() => ({
@@ -174,6 +179,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     // adjust via shortcut-style message
     resp = await sendToTab({ type: "adjust-scale", delta: 10 });
     check("adjust-scale returns 160", resp && resp.scale === 160, JSON.stringify(resp));
+    fs = await page.evaluate(() => getComputedStyle(document.getElementById("st")).fontSize);
+    check("inline element tracks repeated adjustments", fs === "25.6px", fs);
 
     // reset restores original inline styles and cleans storage
     await sendToTab({ type: "reset-scale" });
@@ -207,6 +214,21 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     });
     check("selection wrapped in mark", !!mark && mark.text === "paragraph", JSON.stringify(mark));
     check("default yellow applied", !!mark && mark.bg === "rgb(255, 224, 102)", mark && mark.bg);
+
+    // scaling after highlighting must not blow up the mark (it inherits)
+    await sendToTab({ type: "set-scale", value: 150 });
+    await sleep(200);
+    const markVsPara = await page.evaluate(() => ({
+      mark: getComputedStyle(document.querySelector("mark.readease-highlight")).fontSize,
+      para: getComputedStyle(document.getElementById("p2")).fontSize,
+    }));
+    check(
+      "highlight mark keeps its paragraph's size after scaling",
+      markVsPara.mark === markVsPara.para && markVsPara.para === "24px",
+      JSON.stringify(markVsPara)
+    );
+    await sendToTab({ type: "reset-scale" });
+    await sleep(200);
 
     // click on a highlight removes it
     await page.evaluate(() => getSelection().removeAllRanges());

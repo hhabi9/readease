@@ -1,6 +1,7 @@
 {
   "name": "readease-e2e",
   "private": true,
+  "type": "commonjs",
   "description": "End-to-end tests for the ReadEase extension (headless Chrome for Testing)",
   "scripts": {
     "install-chrome": "puppeteer-browsers install chrome@stable --path ./browsers",
